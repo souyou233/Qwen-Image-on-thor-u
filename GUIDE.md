@@ -131,7 +131,7 @@ On the Zeekr co-processor the image backend is one of several **mutually-exclusi
 (one resident at a time in unified memory). The MCP dispatcher exposes:
 
 - `generate_image {prompt, submitter*, width, steps, cfg, seed, priority?}` → **async task**, poll `get_task`.
-- `image_to_image {prompt, image, submitter*, denoise, steps, cfg, seed, priority?}` → async task.
+- `image_to_image {prompt, image, ref_images?, submitter*, denoise, steps, cfg, seed, priority?}` → async task.
   (`submitter` identifies the caller; `priority` — default 5, higher first — reorders the queue.)
 
 Both go through a **single serial priority queue** and surface live in the **task dashboard**
@@ -152,6 +152,11 @@ batching images. Results are copied out of ComfyUI and served as `/files/img_*.p
 - **Reference-latent splice = colour speckle on this stack.** Keep the i2i graph off the node's
   `vae` input (vision-only conditioning) and anchor with `VAEEncode(source)` + denoise ≤ 1; the
   official splice mode is clean on desktop but speckles here (§4).
+- **Multi-reference editing:** pass up to 10 extra images as `images.image_2…` (also vision-only, in
+  the `image_to_image` tool via `ref_images`). Prompt refers to them by number (`图1`/`image 1` =
+  the main/anchor image, `图2`+ = materials). Measured: material fusion ("the fox in image 1 wears
+  the scarf from image 2") needs `denoise=1.0` — which is what the tool defaults to when refs are
+  present; at 0.85 the pixel anchor suppresses added elements.
 - **T2I is square; i2i follows the source.** There is no width/height in the T2I path beyond
   `resolution`; aspect-ratio work belongs in i2i (feed a non-square source) or a post-resize.
 - **FP8 ≠ faster-forever.** `--fast fp8_matrix_mult` is the right default here; image is already fast

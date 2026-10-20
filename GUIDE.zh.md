@@ -123,7 +123,7 @@ loader 加一个 sampler。
 在极氪协处理器上，图是几个**互斥**的重后端之一（统一内存里一次只驻留一个）。MCP 调度器提供：
 
 - `generate_image {prompt, submitter*, width, steps, cfg, seed, priority?}` → **异步任务**，`get_task` 轮询。
-- `image_to_image {prompt, image, submitter*, denoise, steps, cfg, seed, priority?}` → 异步任务。
+- `image_to_image {prompt, image, ref_images?, submitter*, denoise, steps, cfg, seed, priority?}` → 异步任务。
   （`submitter` 标识发起者；`priority` 默认 5，越大越先，用于队列重排。）
 
 两者都走**同一个串行优先级队列**，并实时显示在**任务面板**（`GET http://<host>:8092/`）。因为后端
@@ -141,6 +141,10 @@ loader 加一个 sampler。
   节点下拉框就悄悄找不到。
 - **参考 latent 拼接在本机 = 彩色噪点。** i2i 图里别接节点的 `vae` 输入（只走视觉条件），用
   `VAEEncode(源图)` + denoise ≤ 1 锚定；官方拼接模式在桌面端干净，在这台车上会糊噪点（§4）。
+- **多图参考编辑：** 最多 10 张素材图走 `images.image_2…`（同样只走视觉条件；`image_to_image` 工具的
+  `ref_images` 参数）。prompt 按编号指代：图1=主图（锚定图），图2 起=素材。实测：素材融合类指令
+  （"图1 的狐狸戴上图2 的围巾"）需要 `denoise=1.0`——工具在带 ref 时默认就是 1.0；0.85 的像素锚定
+  会抑制"添加/穿戴"类改动。
 - **文生图是方的；图生图跟随源图。** 文生图除 `resolution` 外没有宽高；宽高比的事放 i2i（喂非方源图）
   或出图后再 resize。
 - **FP8 不是万能加速。** 这里 `--fast fp8_matrix_mult` 就是对的默认值；生图本来就快——没有注意力杠杆可拉
