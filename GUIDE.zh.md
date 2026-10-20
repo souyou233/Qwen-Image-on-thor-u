@@ -77,22 +77,28 @@ UNETLoader(DiT fp8)  CLIPLoader(type=qwen_image)  VAELoader
 `low quality, blurry, distorted, watermark, text`。**文生图是正方形**——一个 `resolution`（默认 1024）
 决定 `resolution×resolution`。
 
-## 4. 图生图（编辑）：同图 + `VAEEncode`，`denoise = strength`
+## 4. 图生图（编辑）：视觉条件 + latent 锚定（混合配方）
 
-编辑复用完全相同的 loaders 和 `TextEncodeQwenImage21`，只换了 *latent 的来源*。加
-`LoadImage → VAEEncode`，把编码后的 latent 送进 `KSampler.latent_image`，并设 **`denoise = strength`**
-（0=几乎原图，1=完全重画；默认 **0.6**）。
+2.1 **没有专用 Edit 权重**（那是老 1.x 的 `Qwen-Image-Edit-2509/2511`）。编辑是同一个模型的一种
+模式：`TextEncodeQwenImage21` 支持可选参考图（`image_1…image_16`），**VLM 文本编码器会真正"看见"
+你的图**。
+
+官方模板还会把参考图接进节点的 `vae` 输入，把它的 latent 以 `reference_latents` 拼进 transformer
+序列。**而在我们这套 Thor/cu130 环境里，这个参考 latent 拼接会在输出上糊出彩色噪点**——实测结论，
+且与 KV-cache 档位（`auto/cpu/off`）、权重量化（fp8 · int8_convrot）、`--fast fp8_matrix_mult`
+开关、`cfg`（1/2/4）都无关。同权重文生图干净，去掉拼接的编辑也干净。所以我们**跳过拼接**，改用
+经典方式锚定构图：
 
 ```
-… TextEncodeQwenImage21（同上）
-LoadImage ─► VAEEncode ─► KSampler.latent_image ,  denoise=strength   （正负向不变）
+… TextEncodeQwenImage21（prompt + image_1，**不接 vae 输入** → 只走视觉条件）
+LoadImage ─► VAEEncode ─► KSampler.latent_image ,  denoise = 0.85（默认） ,  cfg = 1.0
 ```
 
-两点务必记住：
-- **输出尺寸跟随输入图**（由 VAEEncode 的 latent 决定），**不是**你传的宽高——要改尺寸先 resize 源图。
-  这里的 `TextEncodeQwenImage21.resolution` 固定 1024，只影响（用不到的）文本 latent 尺寸。
-- 源图用 `POST /upload/image`（multipart）推上去，返回的 `name` 填进 `LoadImage` 节点。这正是调度器
-  给 `image_to_image` 工具做的事。
+- **视觉 token 负责"听懂编辑指令"，起始 latent 负责"钉住构图"**；`denoise` 是旋钮（越小越保留
+  原图）。预热编辑 **~24 s @1024²**——比文生图默认还快。
+- **输出尺寸跟随输入图**（由 VAEEncode 的 latent 决定）；要改尺寸先 resize 源图。
+- 源图用 `POST /upload/image`（multipart）推上去，返回的 `name` 填进 `LoadImage` 节点——这正是
+  调度器 `image_to_image` 工具做的事。
 
 ## 5. 结果 —— 速度与显存
 
@@ -117,7 +123,7 @@ loader 加一个 sampler。
 在极氪协处理器上，图是几个**互斥**的重后端之一（统一内存里一次只驻留一个）。MCP 调度器提供：
 
 - `generate_image {prompt, submitter*, width, steps, cfg, seed, priority?}` → **异步任务**，`get_task` 轮询。
-- `image_to_image {prompt, image, submitter*, strength, steps, cfg, seed, priority?}` → 异步任务。
+- `image_to_image {prompt, image, submitter*, denoise, steps, cfg, seed, priority?}` → 异步任务。
   （`submitter` 标识发起者；`priority` 默认 5，越大越先，用于队列重排。）
 
 两者都走**同一个串行优先级队列**，并实时显示在**任务面板**（`GET http://<host>:8092/`）。因为后端
@@ -133,6 +139,8 @@ loader 加一个 sampler。
 - **别两个后端一起跑。** 视频占着内存时再跑图会 OOM 或卡住；调度器的忙检测 + `/free` 会处理——别手动双开。
 - **文件名是硬依赖。** 图里按精确名字引用（`…-UC-fp8`、`…_int8_convrot`、`…_bf16`）。`models/` 里改个名，
   节点下拉框就悄悄找不到。
+- **参考 latent 拼接在本机 = 彩色噪点。** i2i 图里别接节点的 `vae` 输入（只走视觉条件），用
+  `VAEEncode(源图)` + denoise ≤ 1 锚定；官方拼接模式在桌面端干净，在这台车上会糊噪点（§4）。
 - **文生图是方的；图生图跟随源图。** 文生图除 `resolution` 外没有宽高；宽高比的事放 i2i（喂非方源图）
   或出图后再 resize。
 - **FP8 不是万能加速。** 这里 `--fast fp8_matrix_mult` 就是对的默认值；生图本来就快——没有注意力杠杆可拉

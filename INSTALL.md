@@ -141,9 +141,11 @@ Expected: a PNG in `comfyui_qwen/output/`. On the appliance these are exposed as
   So you feed `KSampler.positive←[T,0]`, `negative←[T,1]`, `latent_image←[T,2]` — no EmptyLatentImage,
   no separate CLIPTextEncode. sampler `euler/simple`, `cfg=4.0`, `denoise=1.0`.
 - **T2I is square by design:** the graph takes one `resolution` (default 1024). Output = `resolution×resolution`.
-- **Image editing (i2i):** same loaders, but add `LoadImage → VAEEncode` and feed the encoded latent
-  into `KSampler.latent_image`, with **`denoise = strength`** (default 0.6). Output resolution follows
-  the **input image** latent, not a fixed size. Source images go in via `POST /upload/image`.
+- **Image editing (i2i, hybrid recipe):** `LoadImage` feeds BOTH `TextEncodeQwenImage21.images.image_1`
+  (vision conditioning — the VLM sees the source) AND `VAEEncode`, whose latent starts the sampler at
+  **`denoise = 0.85`** (default; lower keeps more of the source). Do NOT wire the node's `vae` input on
+  this stack: the `reference_latents` splice it adds causes colour-speckle noise here (§4 of GUIDE).
+  Output resolution follows the source image. `cfg = 1.0`. Source images go in via `POST /upload/image`.
 - **Model resolution** is via `app/qwen_model_paths.yaml` (`--extra-model-paths-config`), which maps
   `diffusion_models / text_encoders / vae` to the mounted `./models/*`. Filenames must match Section 3.
 - **Memory:** the three weights load to ~16 GB and a 1024² run uses ~13–14 GB — no tiled decode,

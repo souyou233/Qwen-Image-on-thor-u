@@ -81,23 +81,30 @@ Defaults: sampler `euler`, scheduler `simple`, `cfg=4.0`, `steps=20` (8 for draf
 negative `low quality, blurry, distorted, watermark, text`. **T2I is square** — one `resolution`
 (default 1024) sets `resolution×resolution`.
 
-## 4. Image→image (editing): same graph + `VAEEncode`, `denoise = strength`
+## 4. Image→image (editing): vision conditioning + latent anchor (the hybrid recipe)
 
-Editing reuses the identical loaders and `TextEncodeQwenImage21`; you only replace the *source of
-the latent*. Add `LoadImage → VAEEncode`, feed the encoded latent into `KSampler.latent_image`, and
-set **`denoise = strength`** (0 = copy, 1 = full regenerate; default **0.6**).
+2.1 has **no dedicated Edit checkpoint** (that was the older 1.x `Qwen-Image-Edit-2509/2511`).
+Editing is a mode of the same model: `TextEncodeQwenImage21` accepts optional reference images
+(`image_1…image_16`) so **the VLM text encoder literally sees your image**.
+
+The official template ALSO wires the reference image into the node's `vae` input, which splices its
+latent into the transformer sequence as `reference_latents`. **On this Thor/cu130 stack that
+reference-latent splice paints colour-speckle noise into the output** — measured, and unaffected by
+KV-cache setting (`auto/cpu/off`), weight quantization (fp8 · int8_convrot), `--fast fp8_matrix_mult`
+on/off, or `cfg` (1/2/4). The same weights render clean t2i, and a run *without* the splice is clean.
+So we skip the splice and anchor composition the classic way:
 
 ```
-… TextEncodeQwenImage21 (as above)
-LoadImage ─► VAEEncode ─► KSampler.latent_image ,  denoise=strength   (positive/negative unchanged)
+… TextEncodeQwenImage21 (prompt + image_1, **no vae input** → vision conditioning only)
+LoadImage ─► VAEEncode ─► KSampler.latent_image ,  denoise = 0.85 (default) ,  cfg = 1.0
 ```
 
-Two things to internalize:
-- **Output resolution follows the input image** (the VAEEncode latent), *not* any width/height you
-  pass — to change size, resize the source first. The `TextEncodeQwenImage21.resolution` is fixed at
-  1024 here and only affects the (unused) text-latent sizing.
-- Source images are pushed with `POST /upload/image` (multipart), and the returned `name` is put in
-  the `LoadImage` node. This is exactly what the dispatcher does for the `image_to_image` tool.
+- **Vision tokens carry the edit; the starting latent locks the composition.** `denoise` is the
+  dial (lower = keep more of the source). Warm edit: **~24 s @1024²** — faster than the t2i default.
+- **Output resolution follows the input image** (the VAEEncode latent); to change size, resize the
+  source first.
+- Source images are pushed with `POST /upload/image` (multipart); the returned `name` goes into the
+  `LoadImage` node — exactly what the dispatcher's `image_to_image` tool does.
 
 ## 5. Results — speed & memory
 
@@ -124,7 +131,7 @@ On the Zeekr co-processor the image backend is one of several **mutually-exclusi
 (one resident at a time in unified memory). The MCP dispatcher exposes:
 
 - `generate_image {prompt, submitter*, width, steps, cfg, seed, priority?}` → **async task**, poll `get_task`.
-- `image_to_image {prompt, image, submitter*, strength, steps, cfg, seed, priority?}` → async task.
+- `image_to_image {prompt, image, submitter*, denoise, steps, cfg, seed, priority?}` → async task.
   (`submitter` identifies the caller; `priority` — default 5, higher first — reorders the queue.)
 
 Both go through a **single serial priority queue** and surface live in the **task dashboard**
@@ -142,6 +149,9 @@ batching images. Results are copied out of ComfyUI and served as `/files/img_*.p
   busy-check + `/free` handles this — don't hand-start both.
 - **Filenames are load-bearing.** The graph references exact names (`…-UC-fp8`, `…_int8_convrot`,
   `…_bf16`). A rename in `models/` silently breaks the node dropdown.
+- **Reference-latent splice = colour speckle on this stack.** Keep the i2i graph off the node's
+  `vae` input (vision-only conditioning) and anchor with `VAEEncode(source)` + denoise ≤ 1; the
+  official splice mode is clean on desktop but speckles here (§4).
 - **T2I is square; i2i follows the source.** There is no width/height in the T2I path beyond
   `resolution`; aspect-ratio work belongs in i2i (feed a non-square source) or a post-resize.
 - **FP8 ≠ faster-forever.** `--fast fp8_matrix_mult` is the right default here; image is already fast
