@@ -1,0 +1,3 @@
+877b77290339986bca8f771aead381c7a5777347c27d252bbaa915f76667ab0b  models/diffusion_models/qwen-image-2.1-UC-fp8.safetensors
+8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f  models/text_encoders/qwen3vl_8b_int8_convrot.safetensors
+bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9  models/vae/qwen_image_2.1_vae_bf16.safetensors

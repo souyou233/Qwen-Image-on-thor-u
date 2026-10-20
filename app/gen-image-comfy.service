@@ -1,0 +1,31 @@
+# /etc/systemd/system/gen-image-comfy.service
+# Qwen-Image 2.1 (uncensored) on ComfyUI cu130 — image backend.
+# Runs in the SHARED comfy-h3-cu130:v1 image with the qwen launcher + comfyui_qwen + ck_qwen.
+# Adjust the -v host paths to your install (WORK = dir with comfyui_qwen/ + ck_qwen/).
+[Unit]
+Description=Qwen-Image 2.1 Uncensored (ComfyUI cu130, Thor sm_101, fp8)
+After=zeekr-docker.service
+Requires=zeekr-docker.service
+
+[Service]
+Type=simple
+ExecStartPre=-/zeekr_data/docker/bin/docker rm -f qwen-image
+ExecStart=/zeekr_data/docker/bin/docker run --rm --name qwen-image \
+    --network host --privileged --ipc=host \
+    --ulimit memlock=-1 --ulimit stack=67108864 \
+    -v /zeekr_data/video_gen/compat:/compat:ro \
+    -v /usr/lib:/host_lib:ro \
+    -v /usr/local/cuda-12.8/thor/lib64:/host_thor_lib:ro \
+    -v /usr/local/cuda-12.8/lib64:/host_cuda_lib:ro \
+    -v /zeekr_data/video_gen:/workspace \
+    -v /dev/nvgpu:/dev/nvgpu \
+    -v /dev/nvgpu-pci:/dev/nvgpu-pci \
+    -v /dev/nvmap:/dev/nvmap \
+    -v /dev/tegradisp:/dev/tegradisp \
+    -w /workspace \
+    --entrypoint bash comfy-h3-cu130:v1 /workspace/start_comfy_qwen.sh
+ExecStop=/zeekr_data/docker/bin/docker stop qwen-image
+TimeoutStopSec=90
+
+[Install]
+WantedBy=multi-user.target

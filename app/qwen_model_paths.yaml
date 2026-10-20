@@ -1,0 +1,4 @@
+qwen:
+  diffusion_models: /workspace/models/h3/diffusion_models
+  text_encoders: /workspace/models/h3/text_encoders
+  vae: /workspace/models/h3/vae

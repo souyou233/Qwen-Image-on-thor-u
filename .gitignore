@@ -1,0 +1,13 @@
+# Runtime image / code / compat are shared with the companion comfy-h3-cu130 appliance — not re-shipped here.
+# Model weights are downloaded separately (large) — not in git.
+*.tar.gz
+*.tar
+*.safetensors
+comfyui_qwen/
+comfyui/
+ck_qwen/
+compat_libs/
+models/*/*
+!models/*/.gitkeep
+__pycache__/
+output/

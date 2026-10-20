@@ -1,0 +1,17 @@
+{
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "qwen-image-2.1-UC-fp8.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_8b_int8_convrot.safetensors", "type": "qwen_image"}},
+  "3": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_2.1_vae_bf16.safetensors"}},
+  "4": {"class_type": "TextEncodeQwenImage21", "inputs": {
+          "clip": ["2", 0],
+          "prompt": "make it a snowy night scene with warm lantern light, keep the subject",
+          "negative_prompt": "low quality, blurry, distorted, watermark, text",
+          "vae": ["3", 0], "resolution": 1024}},
+  "8": {"class_type": "LoadImage", "inputs": {"image": "REPLACE_WITH_UPLOADED_NAME.png"}},
+  "9": {"class_type": "VAEEncode", "inputs": {"pixels": ["8", 0], "vae": ["3", 0]}},
+  "5": {"class_type": "KSampler", "inputs": {
+          "seed": 777, "steps": 20, "cfg": 4.0, "sampler_name": "euler", "scheduler": "simple",
+          "denoise": 0.6, "model": ["1", 0], "positive": ["4", 0], "negative": ["4", 1], "latent_image": ["9", 0]}},
+  "6": {"class_type": "VAEDecode", "inputs": {"samples": ["5", 0], "vae": ["3", 0]}},
+  "7": {"class_type": "SaveImage", "inputs": {"images": ["6", 0], "filename_prefix": "qwen_i2i"}}
+}
