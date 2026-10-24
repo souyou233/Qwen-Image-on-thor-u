@@ -77,26 +77,36 @@ UNETLoader(DiT fp8)  CLIPLoader(type=qwen_image)  VAELoader
 `low quality, blurry, distorted, watermark, text`。**文生图是正方形**——一个 `resolution`（默认 1024）
 决定 `resolution×resolution`。
 
-## 4. 图生图（编辑）：视觉条件 + latent 锚定（混合配方）
+## 4. 图生图（编辑）：官方 Edit 路线（默认），`loose` 仅作旧版回退
 
 2.1 **没有专用 Edit 权重**（那是老 1.x 的 `Qwen-Image-Edit-2509/2511`）。编辑是同一个模型的一种
-模式：`TextEncodeQwenImage21` 支持可选参考图（`image_1…image_16`），**VLM 文本编码器会真正"看见"
-你的图**。
+模式：`TextEncodeQwenImage21` 支持可选参考图（`image_1…image_16`）。
 
-官方模板还会把参考图接进节点的 `vae` 输入，把它的 latent 以 `reference_latents` 拼进 transformer
-序列。**而在我们这套 Thor/cu130 环境里，这个参考 latent 拼接会在输出上糊出彩色噪点**——实测结论，
-且与 KV-cache 档位（`auto/cpu/off`）、权重量化（fp8 · int8_convrot）、`--fast fp8_matrix_mult`
-开关、`cfg`（1/2/4）都无关。同权重文生图干净，去掉拼接的编辑也干净。所以我们**跳过拼接**，改用
-经典方式锚定构图：
+**默认（2026-10-22 起）= 官方 Edit 路线**（ComfyUI 模板 `image_qwen_image_2_1_image_edit.json`，
+0.42+）：节点**接上 `vae` 输入**，源图 latent 以 **`reference_latents`** 拼进 DiT 序列的
+image_slots；这些图的 VLM 视觉 token 会被丢弃（`comfy/text_encoders/qwen_image21.py` 的
+`keep_vision` 逻辑）。采样从节点的**空 latent、`denoise = 1.0`** 开始——整幅重绘，身份由参考
+latent 承载，**改多少由 prompt 决定、不由 denoise 决定**。模型线上按模板放着
+`QwenImage21Cache`（device `auto|gpu|cpu|off`，默认 `auto`；`off` 每步重算前缀，是排查缓存的
+官方开关）。`resolution = 0` 让每张参考图保持自身尺寸（32 对齐）——**画布跟随 `image_1`**。
 
 ```
-… TextEncodeQwenImage21（prompt + image_1，**不接 vae 输入** → 只走视觉条件）
-LoadImage ─► VAEEncode ─► KSampler.latent_image ,  denoise = 0.85（默认） ,  cfg = 1.0
+UNETLoader ─► QwenImage21Cache(device=auto) ──────────────► KSampler.model
+TextEncodeQwenImage21（prompt + image_1 [+image_2..] + vae，resolution=0）→ 正/负 conditioning + 空 latent
+KSampler(euler/simple, cfg=1.0, steps=25, denoise=1.0, latent = TE out2) ─► VAEDecode ─► SaveImage
 ```
 
-- **视觉 token 负责"听懂编辑指令"，起始 latent 负责"钉住构图"**；`denoise` 是旋钮（越小越保留
-  原图）。预热编辑 **~24 s @1024²**——比文生图默认还快。
-- **输出尺寸跟随输入图**（由 VAEEncode 的 latent 决定）；要改尺寸先 resize 源图。
+> 对本指南早期版本的勘误：这台 Thor/cu130 上曾测到的彩色噪点（当时让我们绕开参考 latent 拼接）
+> 事后查明是**旧 0.34 时代 cu130 栈**的版本产物；当前 0.42 构建上官方路线渲染干净。
+
+**旧版 `loose` 路线**（调度器 `edit_mode="loose"`；仅用于复现 2026-10-22 前的结果，或需要构图
+近乎逐像素钉住时使用）：不接 `vae`——由视觉 token 承载编辑——采样从 `VAEEncode(源图)`、
+`denoise 0.85` 起步。源图 latent 锁死构图的代价是：**源图遮挡住的内容改不了**。
+
+- **多图参考编辑：** 素材图走 `images.image_2…`（工具参数 `ref_images`）。prompt 按编号指代：
+  图1/`image 1` = 被编辑的主图，图2 起 = 素材（"图1 的狐狸戴上图2 的围巾"）。
+- **区域定位技巧：** 在要改的位置涂一个彩色标记，prompt 里点名颜色（"改 RED 区域的外套"）。
+- **画布跟随 `image_1`**（32 对齐）；要改尺寸先 resize 源图。
 - 源图用 `POST /upload/image`（multipart）推上去，返回的 `name` 填进 `LoadImage` 节点——这正是
   调度器 `image_to_image` 工具做的事。
 
@@ -123,8 +133,9 @@ loader 加一个 sampler。
 在极氪协处理器上，图是几个**互斥**的重后端之一（统一内存里一次只驻留一个）。MCP 调度器提供：
 
 - `generate_image {prompt, submitter*, width, steps, cfg, seed, priority?}` → **异步任务**，`get_task` 轮询。
-- `image_to_image {prompt, image, ref_images?, submitter*, denoise, steps, cfg, seed, priority?}` → 异步任务。
-  （`submitter` 标识发起者；`priority` 默认 5，越大越先，用于队列重排。）
+- `image_to_image {prompt, image, ref_images?, edit_mode?, cache?, submitter*, denoise, steps, cfg, seed, priority?}` → 异步任务。
+  （`submitter` 标识发起者；`priority` 默认 5，越大越先，用于队列重排。`edit_mode=edit`=官方 Edit
+  路线（默认）；`loose`=旧混合配方，见 §4。）
 
 两者都走**同一个串行优先级队列**，并实时显示在**任务面板**（`GET http://<host>:8092/`）。因为后端
 串行，切到 `image` 会挤掉 `video`（反之亦然）——后端翻转时会有一次冷启动（约 35s），批量出图时切换
@@ -139,12 +150,11 @@ loader 加一个 sampler。
 - **别两个后端一起跑。** 视频占着内存时再跑图会 OOM 或卡住；调度器的忙检测 + `/free` 会处理——别手动双开。
 - **文件名是硬依赖。** 图里按精确名字引用（`…-UC-fp8`、`…_int8_convrot`、`…_bf16`）。`models/` 里改个名，
   节点下拉框就悄悄找不到。
-- **参考 latent 拼接在本机 = 彩色噪点。** i2i 图里别接节点的 `vae` 输入（只走视觉条件），用
-  `VAEEncode(源图)` + denoise ≤ 1 锚定；官方拼接模式在桌面端干净，在这台车上会糊噪点（§4）。
-- **多图参考编辑：** 最多 10 张素材图走 `images.image_2…`（同样只走视觉条件；`image_to_image` 工具的
-  `ref_images` 参数）。prompt 按编号指代：图1=主图（锚定图），图2 起=素材。实测：素材融合类指令
-  （"图1 的狐狸戴上图2 的围巾"）需要 `denoise=1.0`——工具在带 ref 时默认就是 1.0；0.85 的像素锚定
-  会抑制"添加/穿戴"类改动。
+- **彩色噪点是 0.34 时代栈的产物。** 本指南早期版本曾归咎于参考 latent 拼接并给了绕开方案；在
+  当前 0.42 构建上官方 Edit 路线渲染干净（§4）。再看到彩色噪点，先怀疑栈版本。
+- **多图参考编辑：** 最多 10 张素材图走 `images.image_2…`（工具 `ref_images`）。官方（默认）路线
+  denoise 恒为 1.0，在 prompt 里把融合关系说清楚即可；`loose` 模式下"添加/穿戴"类改动需要
+  `denoise=1.0`——0.85 的像素锚定会抑制新增元素。
 - **文生图是方的；图生图跟随源图。** 文生图除 `resolution` 外没有宽高；宽高比的事放 i2i（喂非方源图）
   或出图后再 resize。
 - **FP8 不是万能加速。** 这里 `--fast fp8_matrix_mult` 就是对的默认值；生图本来就快——没有注意力杠杆可拉

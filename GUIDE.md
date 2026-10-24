@@ -81,28 +81,44 @@ Defaults: sampler `euler`, scheduler `simple`, `cfg=4.0`, `steps=20` (8 for draf
 negative `low quality, blurry, distorted, watermark, text`. **T2I is square** — one `resolution`
 (default 1024) sets `resolution×resolution`.
 
-## 4. Image→image (editing): vision conditioning + latent anchor (the hybrid recipe)
+## 4. Image→image (editing): the official Edit route (default), `loose` as legacy fallback
 
 2.1 has **no dedicated Edit checkpoint** (that was the older 1.x `Qwen-Image-Edit-2509/2511`).
 Editing is a mode of the same model: `TextEncodeQwenImage21` accepts optional reference images
-(`image_1…image_16`) so **the VLM text encoder literally sees your image**.
+(`image_1…image_16`).
 
-The official template ALSO wires the reference image into the node's `vae` input, which splices its
-latent into the transformer sequence as `reference_latents`. **On this Thor/cu130 stack that
-reference-latent splice paints colour-speckle noise into the output** — measured, and unaffected by
-KV-cache setting (`auto/cpu/off`), weight quantization (fp8 · int8_convrot), `--fast fp8_matrix_mult`
-on/off, or `cfg` (1/2/4). The same weights render clean t2i, and a run *without* the splice is clean.
-So we skip the splice and anchor composition the classic way:
+**DEFAULT (since 2026-10-22) — the official Edit route** (ComfyUI template
+`image_qwen_image_2_1_image_edit.json`, 0.42+): the node DOES get its `vae` input, so the source
+image's latent is spliced into the DiT sequence as **`reference_latents`** (at the image slots); the
+VLM vision tokens for those images are dropped (`keep_vision` logic, `comfy/text_encoders/qwen_image21.py`).
+Sampling starts from the node's **empty latent at `denoise = 1.0`** — a full redraw in which identity
+is carried by the reference latents, so **how much changes is driven by the prompt, not by denoise**.
+`QwenImage21Cache` sits on the model line as the template ships it (device `auto|gpu|cpu|off`, default
+`auto`; `off` recomputes the prefix and is the documented way to rule the cache out when debugging).
+`resolution = 0` keeps every reference at its own pixel size (32-aligned) — the canvas follows
+`image_1`, like it always has on this box.
 
 ```
-… TextEncodeQwenImage21 (prompt + image_1, **no vae input** → vision conditioning only)
-LoadImage ─► VAEEncode ─► KSampler.latent_image ,  denoise = 0.85 (default) ,  cfg = 1.0
+UNETLoader ─► QwenImage21Cache(device=auto) ──────────────► KSampler.model
+TextEncodeQwenImage21 (prompt + image_1 [+image_2..] + vae, resolution=0)  → +cond/−cond/empty latent
+KSampler(euler/simple, cfg=1.0, steps=25, denoise=1.0, latent = TE out2) ─► VAEDecode ─► SaveImage
 ```
 
-- **Vision tokens carry the edit; the starting latent locks the composition.** `denoise` is the
-  dial (lower = keep more of the source). Warm edit: **~24 s @1024²** — faster than the t2i default.
-- **Output resolution follows the input image** (the VAEEncode latent); to change size, resize the
-  source first.
+> Correction from an earlier version of this guide: colour-speckle noise once measured on this
+> Thor/cu130 stack — which had us bypass the reference-latent splice — turned out to be an artifact
+> of the **old 0.34-era cu130 stack**. On the current 0.42 build the official route renders clean.
+
+**Legacy `loose` route** (dispatcher `edit_mode="loose"`; keep only to reproduce pre-2026-10-22
+outputs or when you need the layout held near pixel-wise): no `vae` wiring — vision tokens carry the
+edit — and the sampler starts at `VAEEncode(source)` with `denoise 0.85`. Because the source latent
+locks the layout, this route *cannot* change what the source image hides.
+
+- **Multi-reference editing:** extra material images go in as `images.image_2…` (tool param
+  `ref_images`). Prompt addresses slots by number: `图1`/`image 1` = the image being edited,
+  `图2`+ = materials ("the fox in image 1 wears the scarf from image 2").
+- **Region targeting trick:** paint a coloured mark on the spot and name that colour in the prompt
+  ("change the jacket in the RED area").
+- **Output canvas follows `image_1`** (32-aligned); to change size, resize the source first.
 - Source images are pushed with `POST /upload/image` (multipart); the returned `name` goes into the
   `LoadImage` node — exactly what the dispatcher's `image_to_image` tool does.
 
@@ -131,8 +147,9 @@ On the Zeekr co-processor the image backend is one of several **mutually-exclusi
 (one resident at a time in unified memory). The MCP dispatcher exposes:
 
 - `generate_image {prompt, submitter*, width, steps, cfg, seed, priority?}` → **async task**, poll `get_task`.
-- `image_to_image {prompt, image, ref_images?, submitter*, denoise, steps, cfg, seed, priority?}` → async task.
-  (`submitter` identifies the caller; `priority` — default 5, higher first — reorders the queue.)
+- `image_to_image {prompt, image, ref_images?, edit_mode?, cache?, submitter*, denoise, steps, cfg, seed, priority?}` → async task.
+  (`submitter` identifies the caller; `priority` — default 5, higher first — reorders the queue.
+  `edit_mode=edit` = official Edit route and default; `loose` = legacy hybrid, see §4.)
 
 Both go through a **single serial priority queue** and surface live in the **task dashboard**
 (`GET http://<host>:8092/`). Because backends are serial, switching to `image` evicts `video` and
@@ -149,14 +166,13 @@ batching images. Results are copied out of ComfyUI and served as `/files/img_*.p
   busy-check + `/free` handles this — don't hand-start both.
 - **Filenames are load-bearing.** The graph references exact names (`…-UC-fp8`, `…_int8_convrot`,
   `…_bf16`). A rename in `models/` silently breaks the node dropdown.
-- **Reference-latent splice = colour speckle on this stack.** Keep the i2i graph off the node's
-  `vae` input (vision-only conditioning) and anchor with `VAEEncode(source)` + denoise ≤ 1; the
-  official splice mode is clean on desktop but speckles here (§4).
-- **Multi-reference editing:** pass up to 10 extra images as `images.image_2…` (also vision-only, in
-  the `image_to_image` tool via `ref_images`). Prompt refers to them by number (`图1`/`image 1` =
-  the main/anchor image, `图2`+ = materials). Measured: material fusion ("the fox in image 1 wears
-  the scarf from image 2") needs `denoise=1.0` — which is what the tool defaults to when refs are
-  present; at 0.85 the pixel anchor suppresses added elements.
+- **Speckle noise was a 0.34-era artifact.** An earlier version of this guide blamed the
+  reference-latent splice and shipped a workaround for it; on the current 0.42 build the official
+  Edit route renders clean (§4). If you see colour speckle again, suspect the stack version first.
+- **Multi-reference editing:** pass up to 10 extra images as `images.image_2…` (tool `ref_images`).
+  On the official (default) route denoise is always 1.0 — just describe the fusion in the prompt.
+  In `loose` mode, material-addition edits ("wear the scarf from image 2") need `denoise=1.0`: the
+  0.85 pixel anchor suppresses added elements.
 - **T2I is square; i2i follows the source.** There is no width/height in the T2I path beyond
   `resolution`; aspect-ratio work belongs in i2i (feed a non-square source) or a post-resize.
 - **FP8 ≠ faster-forever.** `--fast fp8_matrix_mult` is the right default here; image is already fast
