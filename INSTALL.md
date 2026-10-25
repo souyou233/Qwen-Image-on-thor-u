@@ -36,11 +36,16 @@ comfy-qwen-image-cu130/
 ## 2. Prerequisites (check before installing)
 
 - **Hardware:** NVIDIA **Thor (compute capability sm_101)**, aarch64/ARM64 (verified on Zeekr Thor-U).
-- **Runtime image:** `comfy-h3-cu130:v1` present in `docker images` (loaded by the companion
-  [MiniMax-H3 appliance](https://github.com/souyou233/Minimax-H3-on-thor-u)). This image carries
-  torch 2.13.0+cu130 + comfy_kitchen + all deps and the CUDA-13 forward-compat `libcuda`.
-- **Code tree:** a `comfyui_qwen/` (ComfyUI **0.42.0**) and an isolated `ck_qwen/`
-  (**comfy-kitchen 0.2.39**) available to mount (ships with the same cu130 workspace on the device).
+- **Runtime image:** `comfy-h3-cu130:v1` loaded into `docker images`. Get it from the companion
+  repo's **GitHub Releases**, tag `appliance-v1`
+  (<https://github.com/souyou233/Minimax-H3-on-thor-u/releases/tag/appliance-v1>): download
+  `comfy-h3-cu130-v1.tar.gz.part00`…`part04` (GitHub's 2 GB asset cap splits the ~8.5 GB tarball),
+  `cat` them back into one `.tar.gz`, verify against `SHASUMS-256.txt`, then `docker load`.
+  This image carries torch 2.13.0+cu130 + comfy_kitchen + all deps and the CUDA-13 forward-compat
+  `libcuda`.
+- **Code tree:** `comfyui_qwen/` (ComfyUI **0.42.0**) + isolated `ck_qwen/` (**comfy-kitchen
+  0.2.39**) — download `qwen_code_cu130.tar.gz` from the same release and extract it into the
+  workspace.
 - **Docker** with `--privileged` + GPU device nodes `/dev/nvgpu`, `/dev/nvgpu-pci`, `/dev/nvmap`,
   `/dev/tegradisp`.
 - **Disk:** ≥ 20 GB free for models (~16 GB) + outputs.

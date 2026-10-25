@@ -55,8 +55,8 @@ Runs **Qwen-Image 2.1 Uncensored** text→image **and** image→image (editing) 
 | `models/` | **空**，需自下 3 个模型 | **empty**; download 3 models |
 | `SHA256SUMS` | 3 个模型校验值 | model checksums |
 
-> ⚠️ **运行时镜像** = 配套 `comfy-h3-cu130` 一体机的 `comfy-h3-cu130:v1`（**同一环境**），本仓库**不重复打包大镜像**。`comfyui_qwen`（ComfyUI 0.42）源码树与 `ck_qwen`（comfy-kitchen 0.2.39）随该镜像/挂载提供。
-> The **runtime image** is `comfy-h3-cu130:v1` from the companion appliance (**same environment**); this repo **does not re-ship the multi-GB image**. The `comfyui_qwen` (ComfyUI 0.42) tree and `ck_qwen` (comfy-kitchen 0.2.39) ship with that image / mount.
+> 📦 **运行时镜像** = 配套 `comfy-h3-cu130` 一体机的 `comfy-h3-cu130:v1`（**同一环境**，本仓库不重复打包）。镜像与代码树都在配套仓库的 **GitHub Releases**（tag `appliance-v1`）直接下载：镜像 `comfy-h3-cu130-v1.tar.gz.part00`~`part04`（cat 合并），代码树 `qwen_code_cu130.tar.gz`（含 `comfyui_qwen` ComfyUI 0.42 + `ck_qwen` comfy-kitchen 0.2.39），附 `SHASUMS-256.txt` 校验。
+> 📦 The **runtime image** is `comfy-h3-cu130:v1` from the companion appliance (same environment; not re-shipped here). Image **and** code trees download straight from the companion repo's **GitHub Releases** (tag `appliance-v1`): `comfy-h3-cu130-v1.tar.gz.part00`…`part04` (cat them back) plus `qwen_code_cu130.tar.gz` (ships `comfyui_qwen` ComfyUI 0.42 + `ck_qwen` comfy-kitchen 0.2.39), with `SHASUMS-256.txt` for verification.
 
 ## 文档 · Documentation
 
